@@ -51,6 +51,23 @@ function ensureSpace(doc: InstanceType<typeof PDFDocument>, needed: number): voi
   if (doc.y + needed > doc.page.height - 80) doc.addPage()
 }
 
+// Only adds a new page if we are NOT already near the top of a fresh page.
+// Prevents blank waste pages when ensureSpace already triggered a page break.
+function newSection(doc: InstanceType<typeof PDFDocument>): void {
+  if (doc.y > (doc.page.margins?.top ?? PAGE_MARGIN) + 60) doc.addPage()
+}
+
+// Measure the height a text block will take at the current font/size settings.
+function cellHeight(
+  doc: InstanceType<typeof PDFDocument>,
+  text: string,
+  width: number,
+  fontSize: number,
+  fontName: string,
+): number {
+  return doc.fontSize(fontSize).font(fontName).heightOfString(text, { width })
+}
+
 function sectionHeader(
   doc: InstanceType<typeof PDFDocument>,
   text: string,
@@ -104,14 +121,15 @@ function divider(doc: InstanceType<typeof PDFDocument>): void {
 function stakeholdersSection(doc: InstanceType<typeof PDFDocument>, stakeholders: Stakeholder[]): void {
   const colW = [120, 120, 190, 65]
   const headers = ['Name', 'Role', 'Interests', 'Impact']
-  const rowH = 22
+  const HEADER_H = 22
+  const CELL_PAD = 8 // vertical padding inside each row
 
   ensureSpace(doc, 40)
   let x = PAGE_MARGIN
   const headerY = doc.y
 
   // Header row
-  doc.rect(PAGE_MARGIN, headerY, CONTENT_WIDTH, rowH).fill(COLORS.sectionBlue)
+  doc.rect(PAGE_MARGIN, headerY, CONTENT_WIDTH, HEADER_H).fill(COLORS.sectionBlue)
   headers.forEach((h, i) => {
     doc
       .fillColor(COLORS.brand)
@@ -121,30 +139,32 @@ function stakeholdersSection(doc: InstanceType<typeof PDFDocument>, stakeholders
     x += colW[i]
   })
 
-  doc.y = headerY + rowH + 4
+  doc.y = headerY + HEADER_H + 4
 
   stakeholders.forEach((s) => {
-    ensureSpace(doc, 30)
+    const cells = [s.name, s.role, s.interests, s.impact]
+    const fonts = ['Helvetica', 'Helvetica', 'Helvetica', 'Helvetica-Bold']
+
+    // Measure each cell to find the tallest one → that becomes the row height
+    const heights = cells.map((cell, i) =>
+      cellHeight(doc, cell ?? '', colW[i] - 8, 9, fonts[i]),
+    )
+    const rowH = Math.max(...heights) + CELL_PAD
+
+    ensureSpace(doc, rowH + 4)
     const rowY = doc.y
     x = PAGE_MARGIN
 
-    const cells = [s.name, s.role, s.interests, s.impact]
     cells.forEach((cell, i) => {
       doc
         .fillColor(i === 3 ? severityColor(s.impact) : COLORS.text)
         .fontSize(9)
-        .font(i === 3 ? 'Helvetica-Bold' : 'Helvetica')
-        .text(cell ?? '', x + 4, rowY, { width: colW[i] - 8, lineBreak: false })
+        .font(fonts[i])
+        .text(cell ?? '', x + 4, rowY + CELL_PAD / 2, { width: colW[i] - 8, lineGap: 2 })
       x += colW[i]
     })
 
-    // Row border
-    doc
-      .strokeColor(COLORS.border)
-      .lineWidth(0.3)
-      .rect(PAGE_MARGIN, rowY - 2, CONTENT_WIDTH, rowH)
-      .stroke()
-
+    doc.strokeColor(COLORS.border).lineWidth(0.3).rect(PAGE_MARGIN, rowY, CONTENT_WIDTH, rowH).stroke()
     doc.y = rowY + rowH
   })
 
@@ -154,13 +174,14 @@ function stakeholdersSection(doc: InstanceType<typeof PDFDocument>, stakeholders
 function risksSection(doc: InstanceType<typeof PDFDocument>, risks: Risk[]): void {
   const colW = [220, 70, 205]
   const headers = ['Risk', 'Severity', 'Mitigation']
-  const rowH = 24
+  const HEADER_H = 24
+  const CELL_PAD = 8
 
   ensureSpace(doc, 40)
   let x = PAGE_MARGIN
   const headerY = doc.y
 
-  doc.rect(PAGE_MARGIN, headerY, CONTENT_WIDTH, rowH).fill(COLORS.sectionOrange)
+  doc.rect(PAGE_MARGIN, headerY, CONTENT_WIDTH, HEADER_H).fill(COLORS.sectionOrange)
   headers.forEach((h, i) => {
     doc
       .fillColor(COLORS.brand)
@@ -169,24 +190,32 @@ function risksSection(doc: InstanceType<typeof PDFDocument>, risks: Risk[]): voi
       .text(h, x + 4, headerY + 8, { width: colW[i] - 8, lineBreak: false })
     x += colW[i]
   })
-  doc.y = headerY + rowH + 4
+  doc.y = headerY + HEADER_H + 4
 
   risks.forEach((r) => {
-    ensureSpace(doc, 32)
+    const vals = [r.risk, r.severity, r.mitigation]
+    const fonts = ['Helvetica', 'Helvetica-Bold', 'Helvetica']
+
+    // Measure all cells first to get the correct row height
+    const heights = vals.map((val, i) =>
+      cellHeight(doc, val ?? '', colW[i] - 8, 9, fonts[i]),
+    )
+    const rowH = Math.max(...heights) + CELL_PAD
+
+    ensureSpace(doc, rowH + 4)
     const rowY = doc.y
     x = PAGE_MARGIN
-    const vals = [r.risk, r.severity, r.mitigation]
 
     vals.forEach((val, i) => {
       doc
         .fillColor(i === 1 ? severityColor(r.severity) : COLORS.text)
         .fontSize(9)
-        .font(i === 1 ? 'Helvetica-Bold' : 'Helvetica')
-        .text(val ?? '', x + 4, rowY, { width: colW[i] - 8, lineBreak: false })
+        .font(fonts[i])
+        .text(val ?? '', x + 4, rowY + CELL_PAD / 2, { width: colW[i] - 8, lineGap: 2 })
       x += colW[i]
     })
 
-    doc.strokeColor(COLORS.border).lineWidth(0.3).rect(PAGE_MARGIN, rowY - 2, CONTENT_WIDTH, rowH).stroke()
+    doc.strokeColor(COLORS.border).lineWidth(0.3).rect(PAGE_MARGIN, rowY, CONTENT_WIDTH, rowH).stroke()
     doc.y = rowY + rowH
   })
 
@@ -291,13 +320,13 @@ export function generatePdf(report: ReportData): Promise<Buffer> {
     report.problemBreakdown.constraints.forEach((c) => bulletItem(doc, c))
 
     // ── Section 2: Stakeholders ────────────────────────────────────────────
-    doc.addPage()
+    newSection(doc)
     sectionHeader(doc, '2.  STAKEHOLDERS', COLORS.sectionGreen)
     doc.moveDown(0.5)
     stakeholdersSection(doc, report.stakeholders)
 
     // ── Section 3: Solution Approach ───────────────────────────────────────
-    doc.addPage()
+    newSection(doc)
     sectionHeader(doc, '3.  SOLUTION APPROACH', COLORS.sectionPurple)
 
     h2(doc, 'Overview')
@@ -321,7 +350,7 @@ export function generatePdf(report: ReportData): Promise<Buffer> {
     risksSection(doc, report.solutionApproach.risks)
 
     // ── Section 4: Action Plan ─────────────────────────────────────────────
-    doc.addPage()
+    newSection(doc)
     sectionHeader(doc, '4.  ACTION PLAN', COLORS.sectionOrange)
     doc.moveDown(0.5)
     report.actionPlan.forEach((phase, i) => actionPhase(doc, phase, i))
